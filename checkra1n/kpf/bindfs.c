@@ -50,7 +50,7 @@ static bool kpf_fsctl_dev_by_role_callback(struct xnu_pf_patch *patch, uint32_t 
     }
     found_fsctl_internal = true;
 
-    uint32_t *stackframe = find_prev_insn(opcode_stream - 1, 0x20, 0xa9007bfd, 0xffc07fff); // stp x29, x30, [sp, ...]
+    uint32_t *stackframe = find_prev_insn(opcode_stream - 1, 0x60, 0xa9007bfd, 0xffc07fff); // stp x29, x30, [sp, ...]
     if(!stackframe)
     {
         panic_at(opcode_stream, "kpf_fsctl_dev_by_role: Failed to find stack frame");
@@ -114,18 +114,18 @@ static void kpf_fsctl_dev_by_role_patch(xnu_pf_patchset_t *xnu_text_exec_patchse
     // the first instruction to branch to shellcode. This is the first match below.
     // The second match is for utility functions we need for the shellcode.
 
-    // /x 002088520000b072:e0ffffffe0ffffff
+    // /x 402288520000a872:e0ffffffe0ffffff
     uint64_t matches[] =
     {
-        0x52882000, // mov wN, 0x4100
-        0x72b00000, // movk wN, 0x8000, lsl 16
+        0x52882240, // mov wN, 0x4112
+        0x72a80000, // movk wN, 0x4000, lsl 16
     };
     uint64_t masks[] =
     {
         0xffffffe0,
         0xffffffe0,
     };
-    xnu_pf_maskmatch(xnu_text_exec_patchset, "fsctl_dev_by_role", matches, masks, sizeof(masks)/sizeof(uint64_t), true, (void*)kpf_fsctl_dev_by_role_callback);
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "fsctl_dev_by_role", matches, masks, sizeof(masks)/sizeof(uint64_t), false, (void*)kpf_fsctl_dev_by_role_callback);
 
     // /x 61c0805202308052
     uint64_t vn_matches[] =
@@ -138,7 +138,7 @@ static void kpf_fsctl_dev_by_role_patch(xnu_pf_patchset_t *xnu_text_exec_patchse
         0xffffffff,
         0xffffffff,
     };
-    xnu_pf_maskmatch(xnu_text_exec_patchset, "vnode_open_close", vn_matches, vn_masks, sizeof(vn_masks)/sizeof(uint64_t), true, (void*)kpf_vnode_open_close_callback);
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "vnode_open_close", vn_matches, vn_masks, sizeof(vn_masks)/sizeof(uint64_t), false, (void*)kpf_vnode_open_close_callback);
 }
 
 static bool kpf_shared_region_root_dir_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
