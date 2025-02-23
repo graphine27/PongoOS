@@ -65,9 +65,13 @@ static bool kpf_convert_port_to_map_callback(struct xnu_pf_patch *patch, uint32_
     bool have_zone_require = (patchpoint[0] & 0xfffffe1f) == 0x52800000 &&  // movz w0, {0-15}
                              (patchpoint[1] & 0xffffe0ff) == 0x52800001 &&  // movz w1, {0x0-0x100 with granularity 8}
                              (patchpoint[2] & 0xfc000000) == 0x94000000;    // bl zone_require
+
+    struct mach_header_64* t7000_pmgr_header = xnu_pf_get_kext_header(xnu_header(), "com.apple.driver.AppleT7000PMGR");
 #ifdef DEV_BUILD
     // This is a whole mess: 15.0 beta 2 through 15.3 final, and then again 16.4 beta 1 through 16.x latest.
-    if(have_zone_require != ((gKernelVersion.xnuMajor > 7938 && gKernelVersion.xnuMajor < 8020) || (gKernelVersion.xnuMajor > 8792 && gKernelVersion.xnuMajor < 10002)))
+    // And then of course it gets messier, it comes back on 18.4, but only on 4K devices
+    if(have_zone_require != ((gKernelVersion.xnuMajor > 7938 && gKernelVersion.xnuMajor < 8020) 
+    || (gKernelVersion.xnuMajor > 8792 && gKernelVersion.xnuMajor < 10002) || (gKernelVersion.xnuMajor >= 11417 && t7000_pmgr_header != NULL)))
     {
         panic_at(patchpoint, "kpf_convert_port_to_map: zone_require doesn't match expected XNU version");
     }
@@ -202,6 +206,54 @@ static void kpf_convert_port_to_map_patch(xnu_pf_patchset_t *xnu_text_exec_patch
         0xff00001e,
     };
     xnu_pf_maskmatch(xnu_text_exec_patchset, "convert_port_to_map", matches_variant, masks_variant, sizeof(matches_variant)/sizeof(uint64_t), false, (void*)kpf_convert_port_to_map_callback);
+
+    uint64_t matches_variant2[] =
+    {
+        0x54000001,
+        0xf9400000,
+        0xaa0003e0,
+        0xf9400000,
+        0x90000000,
+        0x91000000,
+        0xeb00001f,
+        0x54000000
+    };
+    uint64_t masks_variant2[] =
+    {
+        0xff00001f,
+        0xffc00000,
+        0xffe0ffe0,
+        0xffc00000,
+        0x9f000000,
+        0xffc00000,
+        0xffe0fc1f,
+        0xff00001f
+    };
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "convert_port_to_map", matches_variant2, masks_variant2, sizeof(matches_variant2)/sizeof(uint64_t), false, (void*)kpf_convert_port_to_map_callback);
+
+    uint64_t matches_variant3[] =
+    {
+        0x7100051f,
+        0x54000001,
+        0xf9400000,
+        0xf9400002,
+        0x90000008,
+        0x91000108,
+        0xeb08005f,
+        0x54000000
+    };
+    uint64_t masks_variant3[] =
+    {
+        0xffffffff,
+        0xff00001f,
+        0xffc00000,
+        0xffc0001f,
+        0x9f00001f,
+        0xffc003ff,
+        0xffffffff,
+        0xff00001f
+    };
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "convert_port_to_map", matches_variant3, masks_variant3, sizeof(matches_variant3)/sizeof(uint64_t), false, (void*)kpf_convert_port_to_map_callback);
 }
 
 static bool found_task_conversion_eval_ldr = false;
