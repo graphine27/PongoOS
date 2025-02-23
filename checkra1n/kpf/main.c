@@ -193,6 +193,13 @@ bool kpf_mac_mount_callback(struct xnu_pf_patch* patch, uint32_t* opcode_stream)
     if (!mac_mount_1) {
         mac_mount_1 = find_next_insn(mac_mount, 0x40, 0x3941c508, 0xFFFFFFFF);
     }
+
+    if (!mac_mount_1) {
+        uint32_t* add = find_prev_insn(mac_mount, 0x40, 0x9101c108, 0xffffffff); // add x8, x8, #0x70
+        if (add && add[1] == 0x39400508) // ldr w8, [x8, #0x1]
+            mac_mount_1 = &add[1];
+    }
+
     if (!mac_mount_1) {
         kpf_has_done_mac_mount = false;
         DEVLOG("kpf_mac_mount_callback: failed to find xzr point");
