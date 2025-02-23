@@ -34,33 +34,36 @@
 
 static uint64_t vfs_context_current, vnode_lookup, vnode_put;
 
-static bool kpf_vfs_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream)
+bool kpf_vfs_callback(struct xnu_pf_patch* patch, uint32_t* opcode_stream)
 {
-    static bool found_vfs = false;
-    if(found_vfs)
+    if(vnode_lookup)
     {
-        panic("kpf_vfs: Found twice");
+        DEVLOG("vnode_lookup_callback: already ran, skipping...");
+        return false;
     }
-    found_vfs = true;
-
-    uint32_t *try = opcode_stream + 8 + sxt32(opcode_stream[8] >> 5, 19); // uint32 takes care of << 2
-    if
-    (
-        (try[0] & 0xfff0ffff) != 0xaa1003e0 || // mov x0, x{16-31}
-        (try[1] & 0xfc000000) != 0x94000000 || // bl sfree
-        (try[2] & 0xfff00fff) != 0xf85003a0 || // ldur x0, [x29, -0x...]
-        (try[3] & 0xff80001f) != 0xB4000000 || // cbz x0, {forward}
-        (try[4] & 0xfc000000) != 0x94000000    // bl vnode_put
-    )
-    {
-        panic_at(opcode_stream, "kpf_vfs: Failed to find vnode_put");
+    uint32_t* cbnz = find_next_insn(&opcode_stream[6], 3, 0x35000000, 0xff000000);
+    if (!cbnz) {
+        DEVLOG("Failed match of vnode_lookup cbnz at 0x%" PRIx64 "", kext_rebase_va(xnu_ptr_to_va(opcode_stream)));
+        return false;
     }
 
-    vfs_context_current = xnu_ptr_to_va(follow_call(opcode_stream + 1));
-    vnode_lookup = xnu_ptr_to_va(follow_call(opcode_stream + 6));
-    vnode_put = xnu_ptr_to_va(follow_call(try + 4));
+    uint32_t *try = cbnz +((*cbnz>>5)&0xFFF);
+    if ((try[0]&0xfffffff0) == 0xaa0003f0 && // mov x{16-31}, x0
+        (try[1]&0xfff0ffff) == 0xaa1003e0)   // mov x0, x{16-31}
+            try += 1;
 
-    puts("KPF: Found VFS");
+    if ((try[0]&0xFFE0FFFF) != 0xAA0003E0 ||    // MOV x0, Xn
+        (try[1]&0xFC000000) != 0x94000000 ||    // BL _sfree
+        (try[3]&0xFF000000) != 0xB4000000 ||    // CBZ
+        (try[4]&0xFC000000) != 0x94000000 ) {   // BL _vnode_put
+        DEVLOG("Failed match of vnode_lookup code at 0x%" PRIx64 "", kext_rebase_va(xnu_ptr_to_va(opcode_stream)));
+        return false;
+    }
+    puts("KPF: Found vnode_lookup");
+    vfs_context_current = xnu_ptr_to_va(follow_call(&opcode_stream[1]));
+    vnode_lookup = xnu_ptr_to_va(follow_call(&opcode_stream[6]));
+    vnode_put = xnu_ptr_to_va(follow_call(&try[4]));
+
     return true;
 }
 
@@ -81,33 +84,26 @@ static void kpf_vfs_patches(xnu_pf_patchset_t *sandbox_text_exec_patchset)
     // 0xfffffff0064fa268      f40300aa       mov x20, x0
     // 0xfffffff0064fa26c      00010035       cbnz w0, 0xfffffff0064fa28c
     //
-    // /x 0000003500000094e30300aaa20300d1000000000000000000000094f00300aa00000035:000080ff000000fcffffffffff03c0ff0000000000000000000000fcf0ffffff000080ff
-    uint64_t matches[] =
-    {
-        0x35000000, // cbnz w*, {forward}
-        0x94000000, // bl vfs_context_current
-        0xaa0003e3, // mov x3, x0
-        0xd10003a2, // sub x2, x29, 0x...
-        0x00000000, // {mov x0, x{16-31} | mov w1, 0}
-        0x00000000, // {mov x0, x{16-31} | mov w1, 0}
-        0x94000000, // bl vnode_lookup
-        0xaa0003f0, // mov x{16-31}, x0
-        0x35000000, // cbnz w*, {forward}
+    // /x 0000003500000094e00300aa026000d1000000000000000000000094:000000ff000000fce0ffffff1fe0ffff0000000000000000000000fc
+    uint64_t matches[] = {
+        0x35000000, // CBNZ
+        0x94000000, // BL _vfs_context_current
+        0xAA0003E0, // MOV Xn, X0
+        0xD1006002, // SUB
+        0x00000000, // MOV X0, Xn || MOV W1, #0
+        0x00000000, // MOV X0, Xn || MOV W1, #0
+        0x94000000, // BL _vnode_lookup
     };
-    uint64_t masks[] =
-    {
-        0xff800000,
-        0xfc000000,
-        0xffffffff,
-        0xffc003ff,
+    uint64_t masks[] = {
+        0xFF000000,
+        0xFC000000,
+        0xFFFFFFE0,
+        0xFFFFE01F,
         0x00000000,
         0x00000000,
-        0xfc000000,
-        0xfffffff0,
-        0xff800000,
+        0xFC000000,
     };
-    // Mark patch as not required - the getters below will panic if needed
-    xnu_pf_maskmatch(sandbox_text_exec_patchset, "vfs", matches, masks, sizeof(matches)/sizeof(uint64_t), false, (void*)kpf_vfs_callback);
+    xnu_pf_maskmatch(sandbox_text_exec_patchset, "vfs", matches, masks, sizeof(matches)/sizeof(uint64_t), true, (void*)kpf_vfs_callback);
 }
 
 uint64_t kpf_vfs__vfs_context_current(void)

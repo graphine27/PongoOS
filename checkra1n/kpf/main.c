@@ -772,33 +772,6 @@ bool ret0_gadget_callback(struct xnu_pf_patch* patch, uint32_t* opcode_stream)
     return true;
 }
 
-uint32_t *vnode_lookup,
-         *vnode_put,
-         *vfs_context_current;
-
-bool vnode_lookup_callback(struct xnu_pf_patch* patch, uint32_t* opcode_stream)
-{
-    if(vnode_lookup)
-    {
-        DEVLOG("vnode_lookup_callback: already ran, skipping...");
-        return false;
-    }
-    uint32_t *try = &opcode_stream[8]+((opcode_stream[8]>>5)&0xFFF);
-    if ((try[0]&0xFFE0FFFF) != 0xAA0003E0 ||    // MOV x0, Xn
-        (try[1]&0xFC000000) != 0x94000000 ||    // BL _sfree
-        (try[3]&0xFF000000) != 0xB4000000 ||    // CBZ
-        (try[4]&0xFC000000) != 0x94000000 ) {   // BL _vnode_put
-        DEVLOG("Failed match of vnode_lookup code at 0x%" PRIx64 "", kext_rebase_va(xnu_ptr_to_va(opcode_stream)));
-        return false;
-    }
-    puts("KPF: Found vnode_lookup");
-    vfs_context_current = follow_call(&opcode_stream[1]);
-    vnode_lookup = follow_call(&opcode_stream[6]);
-    vnode_put = follow_call(&try[4]);
-    xnu_pf_disable_patch(patch);
-    return true;
-}
-
 uint32_t* _proc_set_syscall_filter_mask = NULL;
 uint32_t* protobox_patchpoint = NULL;
 
@@ -1763,42 +1736,18 @@ void kpf_amfi_kext_patches(xnu_pf_patchset_t* patchset) {
         0x7101683f, // cmp w1, 0x5a
         0x54000000, // b.eq
         0x71016c3f, // cmp w1, 0x5b
-        0x54000001, // b.ne
+        0x54000000, // b.{eq,ne}
     };
     uint64_t iiii_masks[] = {
         0xffffffff,
         0xff00001f,
         0xffffffff,
-        0xff00001f,
+        0xff000010,
     };
     xnu_pf_maskmatch(patchset, "amfi_mac_syscall_low", iiii_matches, iiii_masks, sizeof(iiii_matches)/sizeof(uint64_t), false, (void*)kpf_amfi_mac_syscall_low);
 }
 
 void kpf_sandbox_kext_patches(xnu_pf_patchset_t* patchset, bool protobox_used) {
-    uint64_t matches[] = {
-        0x35000000, // CBNZ
-        0x94000000, // BL _vfs_context_current
-        0xAA0003E0, // MOV Xn, X0
-        0xD1006002, // SUB
-        0x00000000, // MOV X0, Xn || MOV W1, #0
-        0x00000000, // MOV X0, Xn || MOV W1, #0
-        0x94000000, // BL _vnode_lookup
-        0xAA0003E0, // MOV Xn, X0
-        0x35000000  // CBNZ
-    };
-    uint64_t masks[] = {
-        0xFF000000,
-        0xFC000000,
-        0xFFFFFFE0,
-        0xFFFFE01F,
-        0x00000000,
-        0x00000000,
-        0xFC000000,
-        0xFFFFFFE0,
-        0xFF000000
-    };
-    xnu_pf_maskmatch(patchset, "vnode_lookup", matches, masks, sizeof(masks)/sizeof(uint64_t), true, (void*)vnode_lookup_callback);
-
     // /x 0800009008010091081970f8030140b9e00300aae10300aae20300aa:1f00009fff03c0ffff1ff0ffffffffffffffe0ffffffe0ffffffe0ff
     // iOS 15.4+
     if (protobox_used) {
@@ -2342,7 +2291,6 @@ static void kpf_cmd(const char *cmd, char *args)
     found_vm_fault_enter = false;
     kpf_has_done_mac_mount = false;
     vnode_gaddr = NULL;
-    vfs_context_current = NULL;
     offsetof_p_flags = -1;
 
     struct mach_header_64* hdr = xnu_header();
@@ -2610,14 +2558,9 @@ static void kpf_cmd(const char *cmd, char *args)
     if (!repatch_ldr_x19_vnode_pathoff) panic("no repatch_ldr_x19_vnode_pathoff");
     if (!has_found_sbops) panic("no sbops?");
     if (!amfi_ret) panic("no amfi_ret?");
-    if (!vnode_lookup) panic("no vnode_lookup?");
-    DEVLOG("Found vnode_lookup: 0x%" PRIx64 "", xnu_rebase_va(xnu_ptr_to_va(vnode_lookup)));
-    if (!vnode_put) panic("no vnode_put?");
-    DEVLOG("Found vnode_put: 0x%" PRIx64 "", xnu_rebase_va(xnu_ptr_to_va(vnode_put)));
     if (offsetof_p_flags == -1) panic("no p_flags?");
     if (!found_vm_fault_enter) panic("no vm_fault_enter");
     if (!found_vm_map_protect) panic("Missing patch: vm_map_protect");
-    if (!vfs_context_current) panic("Missing patch: vfs_context_current");
     if (!kpf_has_done_mac_mount) panic("Missing patch: mac_mount");
 
     if (!has_found_apfs_vfsop_mount && apfs_vfsop_mount_string_match != NULL) {
@@ -2702,9 +2645,9 @@ static void kpf_cmd(const char *cmd, char *args)
     // Patch shellcode pointers
     repatch_sandbox_shellcode_ptrs[0] = update_execve;
     repatch_sandbox_shellcode_ptrs[1] = xnu_ptr_to_va(vnode_gaddr);
-    repatch_sandbox_shellcode_ptrs[2] = xnu_ptr_to_va(vfs_context_current);
-    repatch_sandbox_shellcode_ptrs[3] = xnu_ptr_to_va(vnode_lookup);
-    repatch_sandbox_shellcode_ptrs[4] = xnu_ptr_to_va(vnode_put);
+    repatch_sandbox_shellcode_ptrs[2] = kpf_vfs__vfs_context_current();
+    repatch_sandbox_shellcode_ptrs[3] = kpf_vfs__vnode_lookup();
+    repatch_sandbox_shellcode_ptrs[4] = kpf_vfs__vnode_put();
 
     uint32_t* repatch_vnode_shellcode = &shellcode_area[4];
     *repatch_vnode_shellcode = repatch_ldr_x19_vnode_pathoff;
