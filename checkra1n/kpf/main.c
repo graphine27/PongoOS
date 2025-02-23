@@ -1019,10 +1019,15 @@ bool kpf_apfs_patches_rename(struct xnu_pf_patch* patch, uint32_t* opcode_stream
         && (opcode_stream[-1] & 0xffffffff) != 0xaa0003fc /* mov x28, x0 */
         ) return false;
 
-    if (found_apfs_rename) {
-        panic("APFS rename: Found twice");
-    }
+    // don't match resource fork stuffs
+    if (find_next_insn(opcode_stream, 0x20, 0x37180008, 0xfff8001f)) // tbnz w8, #0x3, ...
+        return false;
+
+    if (found_apfs_rename)
+        panic("APFS rename: Found twice!");
+
     found_apfs_rename = true;
+
     puts("KPF: Found APFS rename");
     if ((opcode_stream[2] & 0xff000000) == 0x36000000) {
         /* tbz -> b */
@@ -1318,10 +1323,12 @@ void kpf_apfs_patches(xnu_pf_patchset_t* patchset, bool have_ssv, bool apfs_vfso
         // 0xfffffff0068f3d60      08c44039       ldrb w8, [x0, 0x31] ; [0x31:4]=
         // 0xfffffff0068f3d64      68043037       tbnz w8, 6, 0xfffffff0068f3df0 <- patch this out
         // This patch must not be applied to iOS 15+ because it means people can recovery loop their devices by renaming the snapshot
+        // Must also not be applied to tvOS 18.2+ for the same reason
         // Since tvOS 15.0, the "str" can also be "stur", so we mask out one of the upper bits to catch both,
         // and we apply a mask of 0x1d to the base register, to catch exactly x29 and sp.
         // Since tvOS 15.4, the first st(u)r instruction can also be mov x28, x0, so we only check it in the callback
         // Since tvOS 16.0, the tbnz instruction can also be tbz, which required converting the branch instead of nopping
+        // Since bridgeOS 8.4...
         // r2 cmd:
         // /x a00300f80000403900003037:a003c0fe0000feff0000f8ff
         uint64_t i_matches[] = {
