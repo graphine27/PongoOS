@@ -90,6 +90,8 @@ static bool kpf_nvram_table_callback(struct xnu_pf_patch *patch, uint32_t *opcod
     }
 
     // Sanity checks
+    uint32_t opcode_index = 9;
+
     uint32_t reg = opcode_stream[0] & 0x1f; // adrp
     if
     (
@@ -98,8 +100,9 @@ static bool kpf_nvram_table_callback(struct xnu_pf_patch *patch, uint32_t *opcod
         ((opcode_stream[9] >> 5) &  0x1f) !=  reg                  // ldr src
     )
     {
-        return false;
+        opcode_index = 13;
     }
+
     const char *str = (const char *)(((uint64_t)(opcode_stream + 2) & ~0xfffULL) + adrp_off(opcode_stream[2]) + ((opcode_stream[3] >> 10) & 0xfff));
     if(strcmp(str, "aapl,pci") != 0)
     {
@@ -107,7 +110,7 @@ static bool kpf_nvram_table_callback(struct xnu_pf_patch *patch, uint32_t *opcod
     }
     nvram_inline_patch = true;
 
-    uint32_t *tbnz = find_next_insn(opcode_stream + 10, 10, 0x37100000 | (opcode_stream[9] & 0x1f), 0xfff8001f); // tbnz wM, 2, 0xfffffff0077ae070
+    uint32_t *tbnz = find_next_insn(opcode_stream + 10, 0x10, 0x37100000 | (opcode_stream[opcode_index] & 0x1f), 0xfff8001f); // tbnz wM, 2, 0xfffffff0077ae070
     if(!tbnz)
     {
         panic_at(opcode_stream, "kpf_nvram_unlock: Failed to find tbnz");
@@ -269,6 +272,38 @@ static void kpf_nvram_patches(xnu_pf_patchset_t *xnu_text_exec_patchset)
         0xfffffe10,
     };
     xnu_pf_maskmatch(xnu_text_exec_patchset, "nvram_unlock", matches4, masks4, sizeof(matches4)/sizeof(uint64_t), false, (void*)kpf_nvram_table_callback);
+
+    uint64_t matches5[] =
+    {
+        0x90000000,
+        0x91000000,
+        0x90000000,
+        0x91000000,
+        0xaa0003e1,
+        0x94000000,
+        0x34000000,
+        0x91006008,
+        0xf9400000,
+        0xaa0803e0,
+        0xb5000000,
+        0x14000000
+    };
+    uint64_t masks5[] =
+    {
+        0x9f000000,
+        0xffc00000,
+        0x9f00001f,
+        0xffc003ff,
+        0xffe0ffff,
+        0xfc000000,
+        0xff00001f,
+        0xfffffc1f,
+        0xffc0001f,
+        0xffffffe0,
+        0xff00001f,
+        0xfc000000
+    };
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "nvram_unlock", matches5, masks5, sizeof(matches5)/sizeof(uint64_t), false, (void*)kpf_nvram_table_callback);
 }
 
 static void kpf_nvram_finish(struct mach_header_64 *hdr, palerain_option_t *palera1n_flags)
