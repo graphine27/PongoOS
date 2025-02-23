@@ -2012,13 +2012,20 @@ bool load_init_program_at_path_callback(struct xnu_pf_patch *patch, uint32_t *op
         {
             if (
                 (start[i    ] & 0xffffffe0) == 0x52800020 && // mov wN, #0x1
-                (start[i + 1] & 0xffe0fc1f) == 0x1ac02002 && // mov w2, wN, wM
+                (start[i + 1] & 0xffe0fc1f) == 0x1ac02002 && // lsl w2, wN, wM
                 (start[i + 2] & 0xffc003ff) == 0x910003e1 && // add x1, sp, ...
-                (start[i + 3] & 0xffffffff) == 0xd2800003 && // mov x3, #0x0
-                (start[i + 4] & 0xfc000000) == 0x94000000    // bl
+                (start[i + 3] & 0xffffffff) == 0xd2800003 // mov x3, #0x0
             )
             {
-                bl = &start[i + 4];
+                if ((start[i + 4] & 0xfc000000) == 0x94000000)   // bl
+                    bl = &start[i + 4];
+                else if (
+                    (start[i + 4] & 0xffffffff) == 0xd2800004 && // mov x4, #0x0
+                    (start[i + 5] & 0xfc000000) == 0x94000000
+                )
+                    bl = &start[i + 5];
+                else
+                    return false;
                 mach_vm_allocate_kernel_new = true;
                 break;
             }
