@@ -2043,6 +2043,8 @@ bool load_init_program_at_path_callback(struct xnu_pf_patch *patch, uint32_t *op
 bool copyout_callsites_callback(struct xnu_pf_patch *patch, uint32_t *opcode_stream) {
     // Don't match inlined copyout
     if (find_prev_insn(opcode_stream-1, 20, 0x52801102, 0xffffffff)) return false; /* mov w2, #0x88 */
+    if (find_prev_insn(opcode_stream-1, 20, 0x52800e82, 0xffffffff)) return false; /* mov w2, #0x74 */
+
 
     uint32_t* candidate = follow_call(&opcode_stream[1]);
     if (!copyout) {
@@ -2167,7 +2169,24 @@ void kpf_md0oncores_patch(xnu_pf_patchset_t* patchset)
         0xffff03f0,
         0xfe000000
     };
-    xnu_pf_maskmatch(patchset, "copyout_callsites", copyout_matches, copyout_masks, sizeof(copyout_matches)/sizeof(uint64_t), true, (void*)copyout_callsites_callback);
+    xnu_pf_maskmatch(patchset, "copyout_callsites", copyout_matches, copyout_masks, sizeof(copyout_matches)/sizeof(uint64_t), false, (void*)copyout_callsites_callback);
+
+    // iOS 18.4+
+    // /x 820e805200000094f00300aa00000034:ffffffff000000fcf0ffffff1f0000ff
+    uint64_t copyout_matches2[] = {
+        0x52800e82, // mov w2, #0x74
+        0x94000000, // bl copyout
+        0xaa0003f0, // mov x{16-31}, x0
+        0x34000000  // cbz w0, ...
+    };
+
+    uint64_t copyout_masks2[] = {
+        0xffffffff,
+        0xfc000000,
+        0xfffffff0,
+        0xff00001f
+    };
+    xnu_pf_maskmatch(patchset, "copyout_callsites", copyout_matches2, copyout_masks2, sizeof(copyout_matches)/sizeof(uint64_t), false, (void*)copyout_callsites_callback);
 }
 
 static uint32_t shellcode_count;
