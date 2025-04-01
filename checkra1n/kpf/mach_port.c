@@ -67,7 +67,8 @@ static bool kpf_convert_port_to_map_callback(struct xnu_pf_patch *patch, uint32_
                              (patchpoint[2] & 0xfc000000) == 0x94000000;    // bl zone_require
 
     struct mach_header_64* t7000_pmgr_header = xnu_pf_get_kext_header(xnu_header(), "com.apple.driver.AppleT7000PMGR");
-#ifdef DEV_BUILD
+#if 0
+//#ifdef DEV_BUILD
     // This is a whole mess: 15.0 beta 2 through 15.3 final, and then again 16.4 beta 1 through 16.x latest.
     // And then of course it gets messier, it comes back on 18.4, but only on 4K devices
     if(have_zone_require != ((gKernelVersion.xnuMajor > 7938 && gKernelVersion.xnuMajor < 8020) 
