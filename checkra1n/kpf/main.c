@@ -171,6 +171,32 @@ extern uint32_t sandbox_shellcode[], sandbox_shellcode_setuid_patch[], sandbox_s
 extern uint32_t launchd_execve_hook[], launchd_execve_hook_ptr[], launchd_execve_hook_offset[], launchd_execve_hook_pagesize[], launchd_execve_hook_mach_vm_allocate_kernel[];
 extern uint32_t proc_set_syscall_filter_mask_shc[], proc_set_syscall_filter_mask_shc_target[], zalloc_ro_mut[];
 
+bool kpf_img4_callback(struct xnu_pf_patch* patch, uint32_t* opcode_stream){
+    uint32_t* cbz1 = find_next_insn(opcode_stream, 0x20, 0x340000e0, 0xFFFFFFFF);
+    uint32_t* cbz2 = find_next_insn(opcode_stream, 0x20, 0x34000480, 0xFFFFFFFF);
+    
+    if(cbz1 && cbz2){
+        puts("KPF: found img4");
+        *cbz1 = 0x14000007;
+        *cbz2 = 0x14000024;
+        return true;
+    }
+    return false;
+}
+
+
+void kpf_img4_patch(xnu_pf_patchset_t* xnu_text_exec_patchset) {
+    uint64_t matches[] = {
+        0xd10243a8,
+        0xf90016c8,
+    };
+    uint64_t masks[] = {
+        0xffffffff,
+        0xffffffff,
+    };
+    xnu_pf_maskmatch(xnu_text_exec_patchset, "img4", matches, masks, sizeof(matches)/sizeof(uint64_t), false, (void*)kpf_img4_callback);
+}
+
 uint32_t* _mac_mount = NULL;
 bool kpf_has_done_mac_mount = false;
 bool kpf_mac_mount_callback(struct xnu_pf_patch* patch, uint32_t* opcode_stream) {
@@ -2715,6 +2741,14 @@ static void kpf_cmd(const char *cmd, char *args)
         xnu_pf_apply(plk_data_const_range, xnu_plk_data_const_patchset);
         xnu_pf_patchset_destroy(xnu_plk_data_const_patchset);
     }
+
+    xnu_pf_patchset_t* xnu_text_exec_patchset_img4 = xnu_pf_patchset_create(XNU_PF_ACCESS_32BIT);
+    struct mach_header_64* img4_header = xnu_pf_get_kext_header(hdr, "com.apple.security.AppleImage4");
+    xnu_pf_range_t* img4_text_range = xnu_pf_section(img4_header, "__TEXT_EXEC", "__text");
+    kpf_img4_patch(xnu_text_exec_patchset_img4);
+    xnu_pf_emit(xnu_text_exec_patchset_img4);
+    xnu_pf_apply(img4_text_range, xnu_text_exec_patchset_img4);
+    xnu_pf_patchset_destroy(xnu_text_exec_patchset_img4);
 
     kpf_mac_mount_patch(xnu_text_exec_patchset);
     kpf_mac_dounmount_patch_0(xnu_text_exec_patchset);
